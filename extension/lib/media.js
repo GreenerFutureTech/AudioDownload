@@ -1,6 +1,6 @@
 const FORMATS = {
   mp3: 'MP3', m4a: 'M4A', aac: 'AAC', wav: 'WAV', wave: 'WAV',
-  ogg: 'OGG', oga: 'OGG', opus: 'OPUS', flac: 'FLAC', aiff: 'AIFF', aif: 'AIFF',
+  ogg: 'OGG', oga: 'OGG', opus: 'OPUS', flac: 'FLAC', aiff: 'AIFF', aif: 'AIFF', webm: 'WEBM',
   m3u8: 'HLS', m3u: 'HLS', mpd: 'DASH', m4s: 'M4S', cmfa: 'M4S',
 };
 const MIME_EXTENSIONS = {
@@ -64,6 +64,19 @@ export function detectMedia(value, contentType = '', disposition = '') {
     name: filename.replace(/\.[^.]+$/, ''), host: new URL(url).host };
 }
 
+export function detectBlobMedia(source, pageUrl) {
+  if (!source.blobAvailable || !source.url?.startsWith('blob:')) return null;
+  try {
+    const page = new URL(pageUrl);
+    if (!['http:', 'https:'].includes(page.protocol) || new URL(source.url).origin !== page.origin) return null;
+    const media = detectMedia(`${page.origin}/audio`, source.mimeType);
+    if (!media || media.kind !== 'file') return null;
+    const name = safeFilename(source.title || 'Page audio');
+    return { ...media, url: source.url, filename: `${name}.${media.extension}`, name,
+      size: Number.isSafeInteger(source.size) && source.size >= 0 ? source.size : null, source: 'blob' };
+  } catch { return null; }
+}
+
 export function responseSize(headers = [], statusCode = 200) {
   const header = name => headers.find(item => item.name.toLowerCase() === name)?.value;
   const total = header('content-range')?.match(/\/(\d+)$/)?.[1];
@@ -77,14 +90,26 @@ export function mergeTrack(tracks, incoming, limit = 200) {
   const index = tracks.findIndex(track => track.url === incoming.url);
   if (index < 0) return [...tracks, incoming].slice(-limit);
   const previous = tracks[index];
-  const merged = { ...previous, ...incoming, id: previous.id,
+  const preferred = previous.source === 'network' && incoming.source === 'page' ? previous : incoming;
+  const merged = { ...previous, ...incoming, ...preferred, id: previous.id,
     firstSeen: previous.firstSeen, size: incoming.size ?? previous.size,
-    mimeType: incoming.mimeType || previous.mimeType,
+    mimeType: preferred.mimeType || previous.mimeType,
+    lastSeen: incoming.lastSeen,
     playing: incoming.playing ?? previous.playing,
     source: previous.source === 'network' ? 'network' : incoming.source };
   const result = [...tracks];
   result[index] = merged;
   return result;
+}
+
+// Read only the source explicitly supplied by the site. Do not rewrite its URL,
+// remove access parameters, or guess alternate paths to a full-length track.
+export function embeddedAudioSources(value) {
+  const url = httpUrl(value);
+  if (!url) return [];
+  const source = new URL(url).searchParams.get('src');
+  const media = source && detectMedia(source);
+  return media?.kind === 'file' ? [{ ...media, source: 'embedded', sourcePage: url }] : [];
 }
 
 export function formatBytes(bytes) {

@@ -49,7 +49,7 @@ export async function listRecordings() {
 export async function putChunk(recordingId, sequence, blob) {
   const transaction = (await db()).transaction('chunks', 'readwrite');
   const done = transactionDone(transaction);
-  transaction.objectStore('chunks').put({ key: `${recordingId}:${sequence}`, recordingId, sequence, blob });
+  transaction.objectStore('chunks').put({ key: `${recordingId}:${sequence}`, recordingId, sequence, blob, savedAt: Date.now() });
   await done;
 }
 
@@ -62,7 +62,7 @@ export async function finishRecording(recording, reason = '') {
   const transaction = database.transaction(['recordings', 'chunks'], 'readwrite');
   const done = transactionDone(transaction);
   if (blob.size) transaction.objectStore('recordings').put({ ...recording, blob, bytes: blob.size,
-    status: 'ready', reason, duration: Math.max(0, (recording.stoppedAt || Date.now()) - recording.startedAt) });
+    status: 'ready', reason, duration: Math.max(0, (recording.stoppedAt || chunks.at(-1)?.savedAt || recording.startedAt) - recording.startedAt) });
   else transaction.objectStore('recordings').delete(recording.id);
   for (const chunk of chunks) transaction.objectStore('chunks').delete(chunk.key);
   await done;

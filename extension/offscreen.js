@@ -1,5 +1,6 @@
 import * as store from './lib/recording-store.js';
 import { safeFilename } from './lib/media.js';
+import { resolvePlaylist, assembleHls } from './lib/hls.js';
 
 const MAX_BYTES = 128 * 1024 * 1024;
 const MAX_DURATION = 60 * 60 * 1000;
@@ -7,6 +8,8 @@ let active = null;
 let starting = false;
 let lastError = '';
 const objectUrls = new Map();
+let hlsJob = null;
+let hlsController = null;
 const ready = (async () => {
   // Recover persisted chunks when a browser restart interrupted a recording.
   for (const recording of await store.listRecordings()) {
@@ -37,7 +40,7 @@ async function finalize(recording) {
   await releaseMedia(recording);
   try {
     await recording.writes;
-    await store.finishRecording({ id: recording.id, tabId: recording.tabId, title: recording.title,
+    await store.finishRecording({ id: recording.id, tabId: recording.tabId, title: recording.title, pageUrl: recording.pageUrl,
       startedAt: recording.startedAt, stoppedAt: recording.stoppedAt, mimeType: recording.mimeType }, recording.reason);
   } catch (error) {
     lastError = `Could not finish saving: ${error.message}. Reopen the extension to recover stored chunks.`;
@@ -51,7 +54,7 @@ async function finalize(recording) {
 async function startRecording(message) {
   if (active || starting) throw new Error('A recording is already running.');
   starting = true;
-  const recording = { id: crypto.randomUUID(), tabId: message.tabId, title: message.title,
+  const recording = { id: crypto.randomUUID(), tabId: message.tabId, title: message.title, pageUrl: message.pageUrl,
     startedAt: Date.now(), bytes: 0, sequence: 0, writes: Promise.resolve(), status: 'recording', reason: '' };
   try {
     recording.stream = await navigator.mediaDevices.getUserMedia({
@@ -65,7 +68,7 @@ async function startRecording(message) {
     await recording.context.resume();
     recording.recorder = new MediaRecorder(recording.stream, { mimeType, audioBitsPerSecond: 192000 });
     recording.stopped = new Promise(resolve => { recording.resolveStopped = resolve; });
-    await store.putRecording({ id: recording.id, title: recording.title, tabId: recording.tabId,
+    await store.putRecording({ id: recording.id, title: recording.title, tabId: recording.tabId, pageUrl: recording.pageUrl,
       startedAt: recording.startedAt, mimeType, status: 'recording' });
     recording.recorder.ondataavailable = event => {
       if (!event.data.size) return;
@@ -114,11 +117,26 @@ async function handleMessage(message) {
   await ready;
   switch (message.type) {
     case 'GET_RECORDINGS':
-      return { capture: captureState(), lastError,
+      return { capture: captureState(), lastError, hlsJob,
         recordings: (await store.listRecordings()).filter(row => row.status === 'ready')
           .map(({ blob, ...metadata }) => metadata) };
     case 'START_RECORDING': return startRecording(message);
     case 'STOP_RECORDING': await stopRecording(message.reason); return { capture: captureState() };
+    case 'INSPECT_HLS': {
+      const plan = await resolvePlaylist(message.url);
+      return { originals: plan.originals, summary: { duration: plan.duration,
+        segments: plan.parts.length, extension: plan.extension, selected: plan.selected } };
+    }
+    case 'START_HLS': {
+      if (hlsController) throw new Error('An HLS track is already being assembled.');
+      hlsController = new AbortController();
+      hlsJob = { id: crypto.randomUUID(), title: message.title, status: 'working', completed: 0, total: 0, bytes: 0 };
+      void saveHls(message, hlsController.signal);
+      return { hlsJob };
+    }
+    case 'CANCEL_HLS':
+      hlsController?.abort(new DOMException('Download canceled.', 'AbortError'));
+      return {};
     case 'DELETE_RECORDING':
       if (active?.id === message.id) throw new Error('Stop this recording before deleting it.');
       await store.deleteRecording(message.id);
@@ -130,7 +148,7 @@ async function handleMessage(message) {
       const url = URL.createObjectURL(recording.blob);
       objectUrls.set(token, url);
       const stamp = new Date(recording.startedAt).toISOString().slice(0, 19).replace(/[T:]/g, '-');
-      return { token, url, filename: `${safeFilename(recording.title).slice(0, 100)}-${stamp}.webm` };
+      return { token, url, filename: `${safeFilename(recording.title).slice(0, 100)}-${stamp}.${recording.extension || 'webm'}` };
     }
     case 'RELEASE_URL':
       if (objectUrls.has(message.token)) {
@@ -142,8 +160,25 @@ async function handleMessage(message) {
   }
 }
 
+async function saveHls(message, signal) {
+  try {
+    const plan = await resolvePlaylist(message.url, { signal });
+    const blob = await assembleHls(plan, { signal, onProgress: progress => { Object.assign(hlsJob, progress); } });
+    if (signal.aborted) throw signal.reason;
+    const reason = plan.selected ? `Audio rendition: ${plan.selected}` : '';
+    await store.putRecording({ id: hlsJob.id,
+      title: message.title, startedAt: Date.now(),
+      duration: plan.duration * 1000, bytes: blob.size, mimeType: plan.mimeType, extension: plan.extension,
+      category: 'hls', status: 'ready', blob, reason });
+    hlsJob = { ...hlsJob, status: 'ready' };
+  } catch (error) {
+    hlsJob = { ...hlsJob, status: signal.aborted ? 'canceled' : 'error', error: error.message };
+  } finally { hlsController = null; }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.target !== 'offscreen' || sender.id !== chrome.runtime.id || sender.tab) return;
+  if (message?.target !== 'offscreen' || sender.id !== chrome.runtime.id
+    || (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')))) return;
   handleMessage(message).then(result => sendResponse({ ...result, ok: true }),
     error => sendResponse({ ok: false, error: error.message }));
   return true;

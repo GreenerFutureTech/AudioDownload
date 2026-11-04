@@ -1,43 +1,41 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<title>AudioDownload</title>
-
-<style>
-body {
-    font-family: Arial, sans-serif;
-    width: 400px;
-    padding: 10px;
-}
-
-button {
-    margin-top: 5px;
-    margin-right: 5px;
-}
-
-.track {
-    border: 1px solid #ddd;
-    padding: 6px;
-    margin-top: 6px;
-}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AudioDownload</title>
+  <link rel="stylesheet" href="popup.css">
 </head>
-
 <body>
-
-<h2>AudioDownload</h2>
-
-<div>
-    <button id="scanBtn">Scan Page</button>
-    <button id="recordBtn">Start Recording</button>
-</div>
-
-<hr>
-
-<div id="tracks"></div>
-
-<script src="popup.js"></script>
-
+  <header><div class="brand-icon" aria-hidden="true">♫</div><div><h1>AudioDownload</h1><p>Find it. Hear it. Keep it.</p></div><span class="version">v1.0.3</span></header>
+  <div class="page-context"><span class="status-light"></span><div><span class="eyebrow">CURRENT PAGE</span><p id="pageTitle">Connecting…</p></div><span id="pageHost"></span></div>
+  <div class="record-controls" aria-label="Tab recording controls">
+    <div class="record-status"><span id="recordDot" class="record-dot"></span><span id="recordStatus" role="status">Checking recorder…</span><span id="recordTimer">00:00</span></div>
+    <div class="record-buttons"><button id="recordBtn" class="button primary" disabled>● Start recording</button><button id="stopBtn" class="button stop" disabled>■ Stop &amp; Save</button></div>
+    <p id="recordTarget">Audio from this tab only. You can close the popup while recording.</p>
+  </div>
+  <nav class="tabs" aria-label="Audio views"><button id="detectedTab" class="active" aria-pressed="true">Detected audio <span id="trackCount">0</span></button><button id="savedTab" aria-pressed="false">Saved audio <span id="savedCount">0</span></button></nav>
+  <main>
+    <section id="detectedPanel" aria-label="Detected audio">
+      <div class="section-heading"><div><h2>Audio on this page</h2><p>Files, source links &amp; streams</p></div><button id="scanBtn" class="button secondary">↻ Scan page</button></div>
+      <div class="search-row"><input id="search" type="search" placeholder="Search tracks or sources" aria-label="Search detected audio"><button id="clearBtn" class="text-button">Clear</button></div>
+      <div id="blobNote" class="notice" hidden>The player uses a blob stream. Try a source link below, assemble its HLS playlist, or record the tab.</div>
+      <div id="tracks" class="track-list"></div>
+      <div id="emptyTracks" class="empty"><div class="empty-icon" aria-hidden="true">≋</div><h3>Ready when the music is</h3><p>Play audio on this page. Files and playlists will appear as they load.</p><small>Just installed? Reload this page once.</small></div>
+      <div id="hlsProgress" class="job-card" hidden><div class="section-heading"><h3 id="hlsTitle">Assembling audio</h3><button id="cancelHls" class="text-button">Cancel</button></div><progress id="hlsBar" aria-label="HLS assembly progress"></progress><p id="hlsStatus"></p><button id="showSaved" class="text-button" hidden>Open saved audio →</button></div>
+    </section>
+    <section id="savedPanel" aria-label="Saved audio" hidden>
+      <div class="section-heading"><div><h2>Your saved audio</h2><p>Stored in this browser, ready to download.</p></div></div>
+      <div id="recordings" class="track-list"></div>
+      <div id="emptySaved" class="empty"><div class="empty-icon" aria-hidden="true">↓</div><h3>A space for your sound</h3><p>Stop a recording or assemble an HLS track to save audio here.</p></div>
+      <p class="storage-note">Download a copy to keep it outside this browser. Removing the extension or clearing its data deletes saved audio.</p>
+    </section>
+  </main>
+  <div id="message" class="message" role="status" aria-live="polite" hidden><span id="messageText"></span><button id="dismissMessage" aria-label="Dismiss message">×</button></div>
+  <footer><span>Local by design. No uploads.</span><a href="help.html" target="_blank" rel="noopener">Help ↗</a></footer>
+  <template id="trackTemplate"><article class="track"><div class="track-top"><div class="file-icon" aria-hidden="true">♫</div><div class="track-description"><h3 class="track-name"></h3><p class="track-meta"></p></div><span class="format-label"></span></div><div class="track-badges"></div><div class="track-actions"><button class="button primary download">Download</button><button class="button secondary inspect" hidden>Inspect HLS</button><span class="spacer"></span><button class="icon-button copy" aria-label="Copy audio URL" title="Copy URL">⧉</button><button class="icon-button open" aria-label="Open audio URL in a new tab" title="Open URL">↗</button></div><p class="track-detail" hidden></p><details><summary>Source URL</summary><p class="source-url"></p></details></article></template>
+  <template id="savedTemplate"><article class="track"><div class="track-top"><div class="file-icon saved-icon" aria-hidden="true">♫</div><div class="track-description"><h3 class="track-name"></h3><p class="track-meta"></p></div><span class="format-label"></span></div><p class="saved-date"></p><div class="track-actions"><button class="button primary download">↓ Download</button><span class="spacer"></span><button class="button secondary delete" aria-label="Delete saved audio">Delete</button></div></article></template>
+  <script type="module" src="popup.js"></script>
 </body>
 </html>
