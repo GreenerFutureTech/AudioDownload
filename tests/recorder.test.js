@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { safeFilename } from '../extension/lib/media.js';
 
-test('stopping capture preserves the final WebM chunk, page identity, and downloadable WebM filename', async () => {
+test('stopping capture preserves the final WebM chunk and downloadable WebM filename', async () => {
   let listener;
   let trackStopped = false;
   let contextClosed = false;
@@ -72,7 +72,6 @@ test('stopping capture preserves the final WebM chunk, page identity, and downlo
     const result = await dispatch('GET_RECORDINGS');
     assert.equal(result.recordings.length, 1);
     const saved = result.recordings[0];
-    assert.equal(saved.pageUrl, 'https://suno.com/song/one');
     assert.equal(saved.mimeType, 'audio/webm;codecs=opus');
     assert.equal(saved.tabId, 7);
     assert.equal(await rows.get(saved.id).blob.text(), 'headerfinal');

@@ -2,10 +2,10 @@
   "manifest_version": 3,
   "name": "AudioDownload — Audio Finder & Recorder",
   "short_name": "AudioDownload",
-  "version": "1.0.3",
+  "version": "1.0.6",
   "minimum_chrome_version": "116",
   "description": "Find audio files and playlists on the current page, download original files, or record the tab's audio.",
-  "permissions": ["activeTab", "storage", "downloads", "webRequest", "tabCapture", "offscreen"],
+  "permissions": ["activeTab", "storage", "downloads", "webRequest", "tabCapture", "offscreen", "scripting"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": {

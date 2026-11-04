@@ -64,19 +64,6 @@ export function detectMedia(value, contentType = '', disposition = '') {
     name: filename.replace(/\.[^.]+$/, ''), host: new URL(url).host };
 }
 
-export function detectBlobMedia(source, pageUrl) {
-  if (!source.blobAvailable || !source.url?.startsWith('blob:')) return null;
-  try {
-    const page = new URL(pageUrl);
-    if (!['http:', 'https:'].includes(page.protocol) || new URL(source.url).origin !== page.origin) return null;
-    const media = detectMedia(`${page.origin}/audio`, source.mimeType);
-    if (!media || media.kind !== 'file') return null;
-    const name = safeFilename(source.title || 'Page audio');
-    return { ...media, url: source.url, filename: `${name}.${media.extension}`, name,
-      size: Number.isSafeInteger(source.size) && source.size >= 0 ? source.size : null, source: 'blob' };
-  } catch { return null; }
-}
-
 export function responseSize(headers = [], statusCode = 200) {
   const header = name => headers.find(item => item.name.toLowerCase() === name)?.value;
   const total = header('content-range')?.match(/\/(\d+)$/)?.[1];

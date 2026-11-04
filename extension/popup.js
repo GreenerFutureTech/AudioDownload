@@ -1,5 +1,5 @@
 import { formatBytes, formatDuration } from './lib/media.js';
-import { recordingsForPage } from './lib/page-audio.js';
+import { hlsFailureDetails } from './lib/diagnostics.js';
 
 const $ = id => document.getElementById(id);
 let currentTab;
@@ -51,16 +51,13 @@ function renderTracks() {
   const view = tracks.filter(track => !query || `${track.name} ${track.url}`.toLowerCase().includes(query))
     .sort((a, b) => Number(b.source === 'embedded') - Number(a.source === 'embedded')
       || Number(b.playing) - Number(a.playing) || Number(a.kind !== 'file') - Number(b.kind !== 'file'));
-  const pageRecordings = recordingsForPage(recordings, currentTab).filter(recording => !query
-    || `${recording.title} webm recording`.toLowerCase().includes(query));
-  $('trackCount').textContent = tracks.length + recordingsForPage(recordings, currentTab).length;
-  const signature = JSON.stringify([view.map(({ lastSeen, ...track }) => track), pageRecordings]);
+  $('trackCount').textContent = tracks.length;
+  const signature = JSON.stringify(view.map(({ lastSeen, ...track }) => track));
   if (signature === lastTracks) return;
   lastTracks = signature;
   $('tracks').replaceChildren();
-  $('emptyTracks').hidden = view.length > 0 || pageRecordings.length > 0;
+  $('emptyTracks').hidden = view.length > 0;
   $('emptyTracks').querySelector('h3').textContent = tracks.length ? 'No matching tracks' : 'Ready when the music is';
-  for (const recording of pageRecordings) $('tracks').append(savedRecordingNode(recording));
   for (const track of view) {
     const node = $('trackTemplate').content.firstElementChild.cloneNode(true);
     node.querySelector('.track-name').textContent = track.name;
@@ -71,7 +68,6 @@ function renderTracks() {
     const badges = node.querySelector('.track-badges');
     if (track.source === 'embedded') badge(badges, 'SOURCE LINK · UNVERIFIED');
     if (track.playing) badge(badges, 'PLAYING');
-    if (track.source === 'blob') badge(badges, 'AUDIO FILE');
     if (track.kind === 'playlist') badge(badges, track.format === 'HLS' ? 'HLS PLAYLIST' : 'DASH MANIFEST', 'stream');
     if (track.kind === 'segment') badge(badges, 'SINGLE SEGMENT', 'segment');
     const download = node.querySelector('.download');
@@ -125,11 +121,6 @@ function renderSaved() {
   lastSaved = signature;
   $('recordings').replaceChildren();
   for (const recording of recordings) {
-    $('recordings').append(savedRecordingNode(recording));
-  }
-}
-
-function savedRecordingNode(recording) {
     const node = $('savedTemplate').content.firstElementChild.cloneNode(true);
     node.querySelector('.track-name').textContent = recording.title;
     node.querySelector('.track-name').title = recording.title;
@@ -137,7 +128,6 @@ function savedRecordingNode(recording) {
     node.querySelector('.format-label').textContent = (recording.extension || 'webm').toUpperCase();
     node.querySelector('.saved-date').textContent = `${new Date(recording.startedAt).toLocaleString()}${recording.reason ? ` · ${recording.reason}` : ''}`;
     const download = node.querySelector('.download');
-    download.textContent = `↓ Download ${(recording.extension || 'webm').toUpperCase()}`;
     download.addEventListener('click', () => action(download, async () => {
       await request('DOWNLOAD_RECORDING', { id: recording.id }); message('Download sent to the browser.');
     }));
@@ -153,7 +143,8 @@ function savedRecordingNode(recording) {
       await request('DELETE_RECORDING', { id: recording.id });
       message('Saved audio deleted from this browser.'); await refresh();
     }));
-    return node;
+    $('recordings').append(node);
+  }
 }
 
 function renderRecorder() {
@@ -165,7 +156,6 @@ function renderRecorder() {
   $('recordBtn').disabled = recordingBusy || Boolean(capture) || !/^https?:/.test(currentTab?.url || '');
   // Stop applies to the global recording, even when the user switches tabs.
   $('stopBtn').disabled = recordingBusy || !isRecording;
-
 }
 
 function renderHls() {
@@ -175,6 +165,7 @@ function renderHls() {
   $('hlsTitle').textContent = working ? 'Assembling audio' : hlsJob.status === 'ready' ? 'Your HLS audio is ready' : hlsJob.status === 'canceled' ? 'Assembly canceled' : 'Could not assemble audio';
   $('cancelHls').hidden = !working;
   $('showSaved').hidden = hlsJob.status !== 'ready';
+  $('copyFailure').hidden = hlsJob.status !== 'error';
   const bar = $('hlsBar');
   bar.hidden = !working;
   if (hlsJob.total) { bar.max = hlsJob.total; bar.value = hlsJob.completed; } else bar.removeAttribute('value');
@@ -202,7 +193,7 @@ async function refresh() {
       hlsJob = savedResult.value.hlsJob;
       if (wasRecording && !capture) { message('Recording finished. Download it from Saved audio.'); showSaved(true); }
       if (savedResult.value.lastError) message(savedResult.value.lastError, true);
-      renderSaved(); renderTracks(); renderRecorder(); renderHls();
+      renderSaved(); renderRecorder(); renderHls();
     } else message(savedResult.reason.message, true);
   } finally { refreshBusy = false; }
 }
@@ -210,6 +201,11 @@ async function refresh() {
 $('detectedTab').addEventListener('click', () => showSaved(false));
 $('savedTab').addEventListener('click', () => showSaved(true));
 $('showSaved').addEventListener('click', () => showSaved(true));
+$('copyFailure').addEventListener('click', () => action($('copyFailure'), async () => {
+  await navigator.clipboard.writeText(JSON.stringify({ version: chrome.runtime.getManifest().version,
+    ...hlsFailureDetails(hlsJob) }, null, 2));
+  message('Failure details copied. URL query values are omitted.');
+}));
 $('search').addEventListener('input', renderTracks);
 $('dismissMessage').addEventListener('click', () => { $('message').hidden = true; });
 $('scanBtn').addEventListener('click', () => action($('scanBtn'), async () => {
@@ -220,15 +216,11 @@ $('clearBtn').addEventListener('click', () => action($('clearBtn'), async () => 
   await request('CLEAR_TAB', { tabId: currentTab.id }); await refresh();
 }));
 async function recordingAction(type) {
-  const capturedTabId = capture?.tabId;
   recordingBusy = true; renderRecorder();
   try {
     const result = await request(type, { tabId: currentTab.id });
     capture = result.capture;
-    if (type === 'STOP_RECORDING') {
-      showSaved(capturedTabId !== currentTab.id);
-      message('Recording stopped and saved as WebM. Download it under Audio on this page or Saved audio.');
-    }
+    if (type === 'STOP_RECORDING') { showSaved(true); message('Recording stopped and saved. Choose Download to save the file.'); }
     await refresh();
   } catch (error) { message(error.message, true); }
   finally { recordingBusy = false; renderRecorder(); }
@@ -240,6 +232,7 @@ $('cancelHls').addEventListener('click', () => action($('cancelHls'), async () =
 }));
 
 try {
+  document.querySelector('.version').textContent = `v${chrome.runtime.getManifest().version}`;
   [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!currentTab) throw new Error('No active browser tab.');
   $('pageTitle').textContent = currentTab.title || 'This tab';

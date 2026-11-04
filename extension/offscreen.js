@@ -1,6 +1,8 @@
 import * as store from './lib/recording-store.js';
 import { safeFilename } from './lib/media.js';
 import { resolvePlaylist, assembleHls } from './lib/hls.js';
+import { pageAwareFetch } from './lib/page-fetch.js';
+import { validateM4aSource } from './lib/audio-header.js';
 
 const MAX_BYTES = 128 * 1024 * 1024;
 const MAX_DURATION = 60 * 60 * 1000;
@@ -40,7 +42,7 @@ async function finalize(recording) {
   await releaseMedia(recording);
   try {
     await recording.writes;
-    await store.finishRecording({ id: recording.id, tabId: recording.tabId, title: recording.title, pageUrl: recording.pageUrl,
+    await store.finishRecording({ id: recording.id, tabId: recording.tabId, title: recording.title,
       startedAt: recording.startedAt, stoppedAt: recording.stoppedAt, mimeType: recording.mimeType }, recording.reason);
   } catch (error) {
     lastError = `Could not finish saving: ${error.message}. Reopen the extension to recover stored chunks.`;
@@ -54,7 +56,7 @@ async function finalize(recording) {
 async function startRecording(message) {
   if (active || starting) throw new Error('A recording is already running.');
   starting = true;
-  const recording = { id: crypto.randomUUID(), tabId: message.tabId, title: message.title, pageUrl: message.pageUrl,
+  const recording = { id: crypto.randomUUID(), tabId: message.tabId, title: message.title,
     startedAt: Date.now(), bytes: 0, sequence: 0, writes: Promise.resolve(), status: 'recording', reason: '' };
   try {
     recording.stream = await navigator.mediaDevices.getUserMedia({
@@ -68,7 +70,7 @@ async function startRecording(message) {
     await recording.context.resume();
     recording.recorder = new MediaRecorder(recording.stream, { mimeType, audioBitsPerSecond: 192000 });
     recording.stopped = new Promise(resolve => { recording.resolveStopped = resolve; });
-    await store.putRecording({ id: recording.id, title: recording.title, tabId: recording.tabId, pageUrl: recording.pageUrl,
+    await store.putRecording({ id: recording.id, title: recording.title, tabId: recording.tabId,
       startedAt: recording.startedAt, mimeType, status: 'recording' });
     recording.recorder.ondataavailable = event => {
       if (!event.data.size) return;
@@ -122,8 +124,11 @@ async function handleMessage(message) {
           .map(({ blob, ...metadata }) => metadata) };
     case 'START_RECORDING': return startRecording(message);
     case 'STOP_RECORDING': await stopRecording(message.reason); return { capture: captureState() };
+    case 'VALIDATE_M4A':
+      await validateM4aSource(message.url, pageAwareFetch(message.tabId, message.frameId));
+      return {};
     case 'INSPECT_HLS': {
-      const plan = await resolvePlaylist(message.url);
+      const plan = await resolvePlaylist(message.url, { fetcher: pageAwareFetch(message.tabId, message.frameId) });
       return { originals: plan.originals, summary: { duration: plan.duration,
         segments: plan.parts.length, extension: plan.extension, selected: plan.selected } };
     }
@@ -162,8 +167,9 @@ async function handleMessage(message) {
 
 async function saveHls(message, signal) {
   try {
-    const plan = await resolvePlaylist(message.url, { signal });
-    const blob = await assembleHls(plan, { signal, onProgress: progress => { Object.assign(hlsJob, progress); } });
+    const fetcher = pageAwareFetch(message.tabId, message.frameId);
+    const plan = await resolvePlaylist(message.url, { signal, fetcher });
+    const blob = await assembleHls(plan, { signal, fetcher, onProgress: progress => { Object.assign(hlsJob, progress); } });
     if (signal.aborted) throw signal.reason;
     const reason = plan.selected ? `Audio rendition: ${plan.selected}` : '';
     await store.putRecording({ id: hlsJob.id,
@@ -172,7 +178,8 @@ async function saveHls(message, signal) {
       category: 'hls', status: 'ready', blob, reason });
     hlsJob = { ...hlsJob, status: 'ready' };
   } catch (error) {
-    hlsJob = { ...hlsJob, status: signal.aborted ? 'canceled' : 'error', error: error.message };
+    hlsJob = { ...hlsJob, status: signal.aborted ? 'canceled' : 'error', error: error.message,
+      failure: error.failure || null };
   } finally { hlsController = null; }
 }
 

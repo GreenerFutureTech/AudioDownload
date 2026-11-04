@@ -17,21 +17,23 @@ For a segment URL such as `seg-0.mp4?src=https%3A%2F%2Fexample.com%2Fsong.m4a&mu
 
 If needed, **Inspect HLS** reads a playlist and discovers source links in its initialization and segment URLs. **Assemble audio** downloads its initialization file and segments in order and saves the result under **Saved audio**. This is not merely a downloaded `.m3u8` file. A `blob:` attached to MediaSource refers to a player stream, so the extension works with its underlying URLs instead.
 
+Version 1.0.6 retries failed HLS requests (HTTP 401/403/404 or a network error) in the original tab/frame's **MAIN JavaScript world**, using `chrome.scripting.executeScript`. This allows the site's controlling service worker to serve virtual media routes such as `/_sw-mango/`, which may return 404 when fetched from the extension or an isolated content script. URLs and query parameters are preserved; page-origin CORS rules still apply. Keep the song page open during assembly. A page retry is limited to 16 MB per response; assembly remains limited to 128 MB. If assembly fails, **Copy failure details** identifies the failing playlist, initialization file, or segment, HTTP status, transport, and whether a site service worker controls the page. URL query values, cookies, and authorization headers are omitted.
+
+After updating, reload the extension, **close the old song tab and reopen it**, then play the song and retry. Old content scripts cannot use a reloaded extension's APIs. Version 1.0.6 catches both synchronous and asynchronous context-invalidation failures and detaches stale mutation/playback listeners. The popup displays the actual installed manifest version.
+
+Source M4A links are checked for a valid MP4 header before initiating a download. An opaque or encoded payload is rejected instead of saved with a misleading `.m4a` filename. A complete WebM appears automatically only if it is exposed as an actual audio file; WebM tab recordings still require Start recording and Stop & Save. No recording shortcut is inserted into Detected audio.
+
 Supported assembly: finite (`EXT-X-ENDLIST`), unencrypted audio-only fragmented MP4, AAC, and MP3; relative URLs, query strings, byte ranges, and master playlists with standalone audio renditions. The default audio rendition (or highest bandwidth audio-only variant) is selected. Fragmented MP4 output is `.m4a`; no transcoding occurs. Discontinuities, encryption, changing initialization files, live/incomplete streams, MPEG-TS, video renditions, and DASH assembly are rejected with a reason. Assembly preserves whatever audio the server returns.
 
 ## Recording
 
-The **Stop & Save** button is always visible at the top. It controls the active recording even after reopening the popup or switching tabs. Finished WebM recordings appear under **Audio on this page** for the song's page as well as **Saved audio**, with an explicit **Download WEBM** button. M4A source links remain separate options labeled **Download M4A**; they do not replace or convert WebM recordings. Direct `.webm` files are detected by their URL or audio MIME type, including requests recovered by Scan page.
-
-Detected audio lists downloadable files and playlists, without recording shortcuts. Real audio Blob files are probed from the page and downloaded there in their actual format, including WebM. A MediaSource blob is not a complete file and is not shown as a downloadable WebM. Streaming songs can be saved from their original audio URL or a supported HLS playlist. HLS URLs and processing parameters are used unchanged; there is no muffling-removal option.
-
-Recording runs in an offscreen document and restores audible playback through Web Audio. It captures the selected tab only, never the microphone. Finished recordings are WebM/Opus. Capturing protected playback may fail or yield silence.
+The **Stop & Save** button is always visible at the top. It controls the active recording even after reopening the popup or switching tabs. Recording runs in an offscreen document and restores audible playback through Web Audio. It captures the selected tab only, never the microphone. Finished recordings are WebM/Opus and can be downloaded from **Saved audio**. Capturing protected playback may fail or yield silence.
 
 Chunks are persisted to IndexedDB every second. On stop, capture tracks and the audio context are released, and the chunks are saved as a recording. If the browser exits, persisted chunks can be recovered next time the recorder opens; the last unsaved chunk can be lost. The extension limits an individual recording or assembly to approximately 128 MB, recordings to 60 minutes, and HLS to 4,000 segments. Browser storage quotas still apply. Download important results to your filesystem.
 
 ## Privacy and permissions
 
-No telemetry, accounts, remote code, or upload server. HTTP/HTTPS host access and `webRequest` observe media response headers; a content script reports audio/video sources and playback state. Detection metadata is tab-scoped in session storage and clears on navigation or tab close. Local IndexedDB keeps saved audio until you delete it, clear extension data, or uninstall. `downloads` saves files; `activeTab`, `tabCapture`, and `offscreen` support explicitly started recording. Site authentication, cookie policies, expired links, and Brave Shields may affect downloads. This extension does not bypass access controls or DRM.
+No telemetry, accounts, remote code, or upload server. HTTP/HTTPS host access and `webRequest` observe media response headers; a content script reports audio/video sources and playback state. Detection metadata is tab-scoped in session storage and clears on navigation or tab close. Local IndexedDB keeps saved audio until you delete it, clear extension data, or uninstall. `downloads` saves files; `activeTab`, `tabCapture`, and `offscreen` support explicitly started recording. `scripting` runs the bounded media-fetch function in the original page so its service worker can respond. Site authentication, cookie policies, expired links, and Brave Shields may affect downloads. This extension does not bypass access controls or DRM.
 
 ## Development
 
@@ -39,9 +41,10 @@ No telemetry, accounts, remote code, or upload server. HTTP/HTTPS host access an
 npm.cmd ci
 npm.cmd test
 npm.cmd run check
+npm.cmd run test:browser
 npm.cmd run package
 ```
 
-Development checks require Node 22 or newer. Tests use Node's test runner without subprocess isolation, local fixtures, and a mocked recorder; they do not access your song or browser account. The package command writes `artifacts/AudioDownload-1.0.3.zip`, containing just the extension.
+Development checks require Node 22 or newer. Unit tests use Node's test runner without subprocess isolation, local fixtures, and a mocked recorder. The browser smoke test uses installed Brave (or `AUDIODOWNLOAD_BROWSER`), a temporary profile, and a local service-worker fixture. It verifies that a server-side 404 is recovered by MAIN-world fetching through the site's service worker and that the real extension assembles the returned audio bytes. Neither test accesses your song or browser account. The package command writes `artifacts/AudioDownload-1.0.6.zip`, containing just the extension.
 
 References: [Chrome tab recording](https://developer.chrome.com/docs/extensions/how-to/web-platform/screen-capture), [offscreen documents](https://developer.chrome.com/docs/extensions/reference/api/offscreen), [HLS RFC 8216](https://www.rfc-editor.org/rfc/rfc8216).

@@ -1,12 +1,13 @@
 {
   "name": "audio-download",
-  "version": "1.0.3",
+  "version": "1.0.6",
   "private": true,
   "type": "module",
   "description": "A local-first Brave and Chrome extension for finding and recording page audio.",
   "scripts": {
     "test": "node --test --test-isolation=none tests/*.test.js",
     "check": "node --experimental-vm-modules scripts/check.mjs",
+    "test:browser": "node scripts/browser-sw-smoke.mjs",
     "package": "powershell -NoProfile -File scripts/package.ps1"
   },
   "engines": {

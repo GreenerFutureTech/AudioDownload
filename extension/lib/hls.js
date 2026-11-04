@@ -111,7 +111,7 @@ export function parsePlaylist(text, baseUrl) {
     originals: [...originals.values()] };
 }
 
-async function fetchBytes(url, { signal, range, limit = MAX_HLS_BYTES, fetcher = fetch } = {}) {
+async function fetchBytes(url, { signal, range, stage = 'media', limit = MAX_HLS_BYTES, fetcher = fetch } = {}) {
   const controller = new AbortController();
   const abort = () => controller.abort(signal.reason);
   if (signal?.aborted) throw new DOMException('Download canceled.', 'AbortError');
@@ -120,7 +120,13 @@ async function fetchBytes(url, { signal, range, limit = MAX_HLS_BYTES, fetcher =
   try {
     const response = await fetcher(url, { credentials: 'include', signal: controller.signal,
       headers: range ? { Range: `bytes=${range.offset}-${range.offset + range.length - 1}` } : {} });
-    if (!response.ok) throw new Error(`The server returned HTTP ${response.status}. The link may have expired or require access from your account.`);
+    if (!response.ok) {
+      const error = new Error(`${stage} request failed: HTTP ${response.status} (${new URL(url).pathname}).${response.pageError ? ` Page retry: ${response.pageError}` : ''}`);
+      error.failure = { stage, status: response.status, url, responseUrl: response.url || url,
+        transport: response.transport || 'extension', pageError: response.pageError || null,
+        serviceWorkerControlled: response.serviceWorkerControlled ?? null };
+      throw error;
+    }
     if (range) {
       const match = response.headers.get('content-range')?.match(/^bytes (\d+)-(\d+)\/(?:\d+|\*)$/i);
       if (response.status !== 206 || !match || Number(match[1]) !== range.offset
@@ -143,6 +149,9 @@ async function fetchBytes(url, { signal, range, limit = MAX_HLS_BYTES, fetcher =
     }
     if (!size || (range && size !== range.length)) throw new Error('The server returned an empty or incomplete audio segment.');
     return { blob: new Blob(chunks), url: response.url || url };
+  } catch (error) {
+    if (!error.failure) error.failure = { stage, url, status: null, responseUrl: null, transport: 'unknown' };
+    throw error;
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener('abort', abort);
@@ -156,7 +165,7 @@ export async function resolvePlaylist(url, options = {}) {
   for (let depth = 0; depth < 5; depth++) {
     if (seen.has(url)) throw new Error('The playlist links back to itself.');
     seen.add(url);
-    const response = await fetchBytes(url, { ...options, limit: MAX_PLAYLIST_BYTES });
+    const response = await fetchBytes(url, { ...options, stage: 'Playlist', limit: MAX_PLAYLIST_BYTES });
     const plan = parsePlaylist(await response.blob.text(), response.url);
     for (const media of plan.originals) originals.set(media.url, media);
     if (plan.type === 'media') return { ...plan, originals: [...originals.values()], selected };
@@ -214,7 +223,9 @@ export async function assembleHls(plan, { signal, fetcher = fetch, onProgress = 
   let bytes = 0;
   for (let index = 0; index < inputs.length; index++) {
     const input = inputs[index];
-    const response = await fetchBytes(input.url, { signal, fetcher, range: input.range, limit: MAX_HLS_BYTES - bytes });
+    const response = await fetchBytes(input.url, { signal, fetcher, range: input.range,
+      stage: plan.init && index === 0 ? 'Initialization file' : `Segment ${index + (plan.init ? 0 : 1)}`,
+      limit: MAX_HLS_BYTES - bytes });
     if (plan.init) {
       const data = new Uint8Array(await response.blob.arrayBuffer());
       if (index === 0) validateAudioInit(data); else validateFragment(data);

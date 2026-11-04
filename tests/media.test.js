@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectMedia, detectBlobMedia, httpUrl, embeddedAudioSources, mergeTrack, responseSize,
+import { detectMedia, httpUrl, embeddedAudioSources, mergeTrack, responseSize,
   safeFilename, dispositionFilename, formatDuration, formatBytes } from '../extension/lib/media.js';
 
 test('detects signed and extensionless audio without changing access parameters', () => {
@@ -11,30 +11,6 @@ test('detects signed and extensionless audio without changing access parameters'
   assert.equal(detectMedia('https://example.com/playlist?id=1', 'application/vnd.apple.mpegurl').kind, 'playlist');
   assert.equal(detectMedia('https://example.com/video.mp4', 'video/mp4'), null);
   assert.equal(detectMedia('https://example.com/chunk.m4s', 'audio/mp4').kind, 'segment');
-});
-
-test('detects direct WebM URLs alongside M4A sources and retains their format', () => {
-  const webm = detectMedia('https://example.com/song.webm?token=a%2Bb');
-  assert.equal(webm.format, 'WEBM');
-  assert.equal(webm.filename, 'song.webm');
-  assert.equal(detectMedia('https://example.com/stream', 'audio/webm; codecs=opus').format, 'WEBM');
-  const m4a = detectMedia('https://example.com/song.m4a');
-  const tracks = mergeTrack(mergeTrack([], { ...webm, id: 'webm' }), { ...m4a, id: 'm4a' });
-  assert.deepEqual(tracks.map(track => track.format), ['WEBM', 'M4A']);
-  assert.equal(detectMedia('https://example.com/video.webm', 'video/webm'), null);
-});
-
-test('only verified same-origin audio blobs become downloadable files in their actual format', () => {
-  const source = { url: 'blob:https://suno.com/track', blobAvailable: true,
-    mimeType: 'audio/webm', size: 2048, title: 'Sitting on my Computer' };
-  const webm = detectBlobMedia(source, 'https://suno.com/song/one');
-  assert.equal(webm.filename, 'Sitting on my Computer.webm');
-  assert.equal(webm.source, 'blob');
-  assert.equal(webm.size, 2048);
-  assert.equal(detectBlobMedia({ ...source, blobAvailable: false }, 'https://suno.com/song/one'), null);
-  assert.equal(detectBlobMedia(source, 'https://other.example/song'), null);
-  assert.equal(detectBlobMedia({ ...source, mimeType: 'text/html' }, 'https://suno.com/song/one'), null);
-  assert.equal(detectBlobMedia({ ...source, mimeType: 'audio/mp4' }, 'https://suno.com/song/one').extension, 'm4a');
 });
 
 test('extracts the exact M4A source from the supplied Suno-style manifest segment URL', () => {

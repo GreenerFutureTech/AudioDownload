@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <header><div class="brand-icon" aria-hidden="true">♫</div><div><h1>AudioDownload</h1><p>Find it. Hear it. Keep it.</p></div><span class="version">v1.0.3</span></header>
+  <header><div class="brand-icon" aria-hidden="true">♫</div><div><h1>AudioDownload</h1><p>Find it. Hear it. Keep it.</p></div><span class="version">v1.0.6</span></header>
   <div class="page-context"><span class="status-light"></span><div><span class="eyebrow">CURRENT PAGE</span><p id="pageTitle">Connecting…</p></div><span id="pageHost"></span></div>
   <div class="record-controls" aria-label="Tab recording controls">
     <div class="record-status"><span id="recordDot" class="record-dot"></span><span id="recordStatus" role="status">Checking recorder…</span><span id="recordTimer">00:00</span></div>
@@ -23,7 +23,7 @@
       <div id="blobNote" class="notice" hidden>The player uses a blob stream. Try a source link below, assemble its HLS playlist, or record the tab.</div>
       <div id="tracks" class="track-list"></div>
       <div id="emptyTracks" class="empty"><div class="empty-icon" aria-hidden="true">≋</div><h3>Ready when the music is</h3><p>Play audio on this page. Files and playlists will appear as they load.</p><small>Just installed? Reload this page once.</small></div>
-      <div id="hlsProgress" class="job-card" hidden><div class="section-heading"><h3 id="hlsTitle">Assembling audio</h3><button id="cancelHls" class="text-button">Cancel</button></div><progress id="hlsBar" aria-label="HLS assembly progress"></progress><p id="hlsStatus"></p><button id="showSaved" class="text-button" hidden>Open saved audio →</button></div>
+      <div id="hlsProgress" class="job-card" hidden><div class="section-heading"><h3 id="hlsTitle">Assembling audio</h3><button id="cancelHls" class="text-button">Cancel</button></div><progress id="hlsBar" aria-label="HLS assembly progress"></progress><p id="hlsStatus"></p><button id="showSaved" class="text-button" hidden>Open saved audio →</button><button id="copyFailure" class="text-button" hidden>Copy failure details</button></div>
     </section>
     <section id="savedPanel" aria-label="Saved audio" hidden>
       <div class="section-heading"><div><h2>Your saved audio</h2><p>Stored in this browser, ready to download.</p></div></div>

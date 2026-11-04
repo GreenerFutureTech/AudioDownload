@@ -1,4 +1,5 @@
-import { detectMedia, detectBlobMedia, embeddedAudioSources, mergeTrack, responseSize } from './lib/media.js';
+import { detectMedia, embeddedAudioSources, mergeTrack, responseSize } from './lib/media.js';
+import { readPageMedia } from './lib/main-world-fetch.js';
 
 const queues = new Map();
 let creatingOffscreen;
@@ -46,7 +47,7 @@ chrome.webRequest.onHeadersReceived.addListener(details => {
   if (!media && !originals.length) return;
   void enqueue(details.tabId, async () => {
     const state = await readTab(details.tabId);
-    addTrack(state, media, { size: responseSize(details.responseHeaders, details.statusCode), source: 'network' });
+    addTrack(state, media, { size: responseSize(details.responseHeaders, details.statusCode), source: 'network', frameId: details.frameId });
     for (const original of originals) addTrack(state, original, { source: 'embedded' });
     await saveTab(details.tabId, state);
   }).catch(console.warn);
@@ -103,12 +104,10 @@ async function downloadTrack(tabId, trackId) {
   const state = await readTab(tabId);
   const track = state.tracks.find(item => item.id === trackId);
   if (!track) throw new Error('This track is no longer on the page. Scan the page again.');
-  if (track.source === 'blob') {
-    const result = await chrome.tabs.sendMessage(tabId, { type: 'DOWNLOAD_BLOB', url: track.url,
-      filename: track.filename }, { frameId: track.frameId });
-    if (!result?.ok) throw new Error(result?.error || 'The blob file is no longer available. Play the song and scan again.');
-    return {};
+  if (track.source === 'embedded' && track.extension === 'm4a') {
+    await offscreenMessage('VALIDATE_M4A', { url: track.url, tabId, frameId: track.frameId || 0 });
   }
+
   const downloadId = await chrome.downloads.download({ url: track.url,
     filename: `AudioDownload/${track.filename}`, conflictAction: 'uniquify', saveAs: true });
   return { downloadId };
@@ -134,13 +133,12 @@ async function handleMessage(message, sender) {
       await enqueue(tabId, async () => {
         const state = await readTab(tabId);
         const frameId = sender.frameId || 0;
-        state.frames[frameId] = { hasBlob: Boolean(message.hasBlob), hasMedia: Boolean(message.hasMedia),
+        state.frames[frameId] = { hasBlob: Boolean(message.hasBlob),
           playing: (message.sources || []).filter(source => source.playing).map(source => source.url) };
         for (const source of (message.sources || []).slice(0, 300)) {
-          const media = detectBlobMedia(source, sender.url)
-            || detectMedia(source.url, source.mimeType)
+          const media = detectMedia(source.url, source.mimeType)
             || (source.audioElement ? detectMedia(source.url, 'audio/unknown') : null);
-          addTrack(state, media, { source: media?.source === 'blob' ? 'blob' : 'page', frameId });
+          addTrack(state, media, { source: 'page' });
           for (const original of embeddedAudioSources(source.url)) addTrack(state, original, { source: 'embedded' });
         }
         for (const resource of (message.resources || []).slice(0, 500)) {
@@ -171,7 +169,7 @@ async function handleMessage(message, sender) {
       const state = await readTab(message.tabId);
       const track = state.tracks.find(item => item.id === message.trackId);
       if (track?.format !== 'HLS') throw new Error('Choose an HLS playlist to inspect.');
-      const result = await offscreenMessage('INSPECT_HLS', { url: track.url });
+      const result = await offscreenMessage('INSPECT_HLS', { url: track.url, tabId: message.tabId, frameId: track.frameId || 0 });
       await enqueue(message.tabId, async () => {
         const latest = await readTab(message.tabId);
         if (!latest.tracks.some(item => item.id === track.id)) return;
@@ -187,7 +185,17 @@ async function handleMessage(message, sender) {
       const track = state.tracks.find(item => item.id === message.trackId);
       if (track?.format !== 'HLS') throw new Error('Choose an HLS playlist to save.');
       const tab = await chrome.tabs.get(message.tabId);
-      return offscreenMessage('START_HLS', { url: track.url, title: tab.title || track.name });
+      return offscreenMessage('START_HLS', { url: track.url, title: tab.title || track.name,
+        tabId: message.tabId, frameId: track.frameId || 0 });
+    }
+    case 'FETCH_HLS_RESOURCE': {
+      if (sender.url !== chrome.runtime.getURL('offscreen.html')) throw new Error('Only the HLS downloader may request a page fetch.');
+      const [injection] = await chrome.scripting.executeScript({
+        target: { tabId: message.tabId, frameIds: [Math.max(0, message.frameId || 0)] },
+        world: 'MAIN', func: readPageMedia, args: [message.url, message.range || null],
+      });
+      if (!injection?.result) throw new Error('The original page did not return media. Reload the song page.');
+      return { ...injection.result, ok: true };
     }
     case 'CANCEL_HLS':
       return offscreenMessage('CANCEL_HLS');
@@ -204,7 +212,7 @@ async function handleMessage(message, sender) {
         if (!/^https?:\/\//.test(tab.url || '')) throw new Error('Open a regular website to record its audio.');
         const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
         const result = await offscreenMessage('START_RECORDING', { streamId, tabId: tab.id,
-          pageUrl: tab.url, title: tab.title || 'Tab audio' });
+          title: tab.title || 'Tab audio' });
         await setCapture(result.capture);
         return result;
       });
